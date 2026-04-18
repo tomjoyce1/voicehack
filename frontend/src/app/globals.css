@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ink: #0e1726;
+  --ink-soft: #4a5568;
+  --paper: #ffffff;
+  --paper-2: #fafaf7;
+  --line: #e7e4dc;
+  --accent: #2f7a4f; /* clinical green */
+  --accent-soft: #e6f1eb;
+  --coral: #e26d5c; /* thymia warmth */
+  --navy: #1b2a4e; /* speechmatics */
+  --gold: #d4a24c;
+}
+
+html,
+body {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+body {
+  font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.font-hand {
+  font-family: var(--font-caveat), "Segoe Script", cursive;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .grid-dots {
+    background-image: radial-gradient(rgba(14, 23, 38, 0.08) 1px, transparent 1px);
+    background-size: 18px 18px;
+  }
+  .paper-lines {
+    background-image: linear-gradient(to bottom, transparent 31px, rgba(14, 23, 38, 0.06) 32px);
+    background-size: 100% 32px;
+  }
+  .btn-primary {
+    @apply inline-flex items-center gap-2 rounded-full bg-ink text-white px-6 py-3 text-sm font-medium hover:bg-ink/90 transition;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center gap-2 rounded-full border border-line text-ink px-5 py-2.5 text-sm font-medium hover:bg-paper-2 transition;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-1 text-xs font-medium text-ink-soft;
+  }
+}
+
+/* ECG line animation */
+@keyframes ecg-scroll {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -2000; }
+}
+.ecg-line {
+  stroke-dasharray: 2000;
+  animation: ecg-scroll 14s linear infinite;
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+.pulse-soft {
+  animation: pulse-soft 2.4s ease-in-out infinite;
+}
+
+/* Subtle ink underline on hover */
+.ink-underline {
+  background-image: linear-gradient(to right, var(--ink), var(--ink));
+  background-size: 0% 1.5px;
+  background-repeat: no-repeat;
+  background-position: left bottom;
+  transition: background-size 0.3s ease;
+}
+.ink-underline:hover {
+  background-size: 100% 1.5px;
+}

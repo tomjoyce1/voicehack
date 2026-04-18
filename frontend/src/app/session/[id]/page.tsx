@@ -100,6 +100,8 @@ export default function SessionPage({ params }: { params: { id: string } }) {
       } else if (e.type === "patient_audio") {
         lastPatientAudioAt.current = Date.now();
         setSpeaking(true);
+      } else if (e.type === "stop_audio") {
+        setSpeaking(false);
       } else if (e.type === "scored") {
         router.push(`/results/${e.sessionId}`);
       }

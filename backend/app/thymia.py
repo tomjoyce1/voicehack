@@ -57,6 +57,9 @@ class ThymiaResult:
     error: Optional[str] = None
 
 
+AUDIO_BATCH_BYTES = 16000 * 2  # 1 second of PCM16@16kHz before sending
+
+
 class ThymiaSidecar:
     """Streams audio + transcripts to Thymia Sentinel WebSocket in background."""
 
@@ -72,6 +75,7 @@ class ThymiaSidecar:
         self._stopped = False
         self._audio_chunks_sent = 0
         self._transcripts_sent = 0
+        self._audio_buffer = bytearray()  # batch small chunks before sending
 
     async def start(self):
         """Connect to Thymia WebSocket in background."""
@@ -237,6 +241,11 @@ class ThymiaSidecar:
         has_helios = anxiety > 0 or distress > 0 or depression > 0
         neutral = emotions.get("neutral", 0)
 
+        # Policy confidence → numeric weight (more confident = more reliable)
+        conf_str = result.get("confidence", "low")
+        conf_weight = {"low": 0.3, "medium": 0.6, "high": 0.9}.get(conf_str, 0.3)
+        level = int(result.get("level", 0))  # 0-3 safety level
+
         if has_helios:
             nervousness = anxiety
             voice_strain = distress
@@ -247,9 +256,13 @@ class ThymiaSidecar:
             voice_strain = emotions.get("sad", 0.0)
             hesitancy = emotions.get("<unk>", 0.0)
         else:
-            nervousness = 0.0
-            voice_strain = 0.0
-            hesitancy = 0.0
+            # Fallback: derive from policy level + confidence when Psyche has no data.
+            # Level 0 = no concern, but some baseline nervousness is realistic.
+            # Higher level or confidence → more signal.
+            base = 0.15 + level * 0.2  # 0.15 → 0.75
+            nervousness = round(base * conf_weight, 3)
+            voice_strain = round(base * conf_weight * 0.5, 3)
+            hesitancy = round(base * conf_weight * 0.3, 3)
 
         return PolicySnapshot(
             turn=data.get("triggered_at_turn", 0),
@@ -267,9 +280,19 @@ class ThymiaSidecar:
         )
 
     def push_audio(self, pcm16_16k: bytes):
-        """Queue audio for Thymia. Non-blocking."""
-        if not self._stopped:
-            self._send_queue.put_nowait(pcm16_16k)
+        """Batch small audio chunks into ~1s buffers before queuing for Thymia."""
+        if self._stopped:
+            return
+        self._audio_buffer.extend(pcm16_16k)
+        if len(self._audio_buffer) >= AUDIO_BATCH_BYTES:
+            self._send_queue.put_nowait(bytes(self._audio_buffer))
+            self._audio_buffer.clear()
+
+    def flush_audio(self):
+        """Send any remaining buffered audio."""
+        if self._audio_buffer and not self._stopped:
+            self._send_queue.put_nowait(bytes(self._audio_buffer))
+            self._audio_buffer.clear()
 
     def push_transcript(self, text: str, role: str = "user", is_final: bool = True):
         """Queue a transcript for Thymia. Non-blocking."""
@@ -289,6 +312,7 @@ class ThymiaSidecar:
 
     def build_result(self, transcript_log: List[dict]) -> ThymiaResult:
         """Build final result from accumulated snapshots."""
+        self.flush_audio()
         for i, s in enumerate(self._snapshots):
             log.info("[%s] Snapshot #%d raw POLICY_RESULT:\n%s",
                      self._session_id, i, json.dumps(s.raw, indent=2)[:3000])

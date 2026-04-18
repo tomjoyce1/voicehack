@@ -153,7 +153,7 @@ class StudentSTT:
         has_speech = False
         silence_count = 0
         SILENCE_THRESHOLD = 0.5
-        SILENCE_FRAMES_NEEDED = 2
+        SILENCE_FRAMES_NEEDED = 1
         pending_flush = False
         msg_count = 0
 

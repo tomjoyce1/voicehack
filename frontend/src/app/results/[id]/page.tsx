@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Logo } from "@/components/Logo";
 import { ScoreDial } from "@/components/ScoreDial";
-import { BiomarkerTimeline } from "@/components/BiomarkerTimeline";
 import {
   PrescriptionNote,
   type PrescriptionData,
@@ -18,6 +17,10 @@ import {
   X,
   Quote,
   Share2,
+  Activity,
+  TrendingDown,
+  TrendingUp,
+  Loader2,
 } from "lucide-react";
 
 type ResultPayload = {
@@ -28,13 +31,48 @@ type ResultPayload = {
   delivery: {
     score: number;
     max: number;
-    timeline: { confidence: number[]; anxiety: number[]; pacing: number[]; empathy: number[] };
+    timeline: {
+      confidence: number[];
+      anxiety: number[];
+      pacing: number[];
+      empathy: number[];
+    };
     concordance: string[];
   };
-  transcript: { role: "student" | "patient"; text: string; annotation?: string }[];
+  transcript: {
+    role: "student" | "patient";
+    text: string;
+    annotation?: string;
+  }[];
   written_feedback: string;
   /** Optional medication rows from backend; omit on older stored results (client fallback). */
   prescriptionMedications?: PrescriptionMedication[];
+};
+
+type VoiceSection = {
+  turn: number;
+  nervousness: number;
+  voice_strain: number;
+  hesitancy: number;
+  emotions: Record<string, number>;
+  alert_level: string;
+  confidence: string;
+  rationale: string;
+  concerns: string[];
+};
+
+type VoiceAnalysis = {
+  status?: string;
+  error?: string;
+  overall?: {
+    nervousness: number;
+    voice_strain: number;
+    hesitancy: number;
+  };
+  peak_stress_moment?: string;
+  calmest_moment?: string;
+  llm_interpretation?: string;
+  sections?: VoiceSection[];
 };
 
 function isValidResultPayload(v: unknown): v is ResultPayload {
@@ -103,19 +141,37 @@ const DEMO_RESULT: ResultPayload = {
     },
     concordance: [
       "Between 1:20 and 1:40 you asked three closed questions in a row while your voice anxiety spiked to 42 — consider an open question to reset.",
-      "You told the patient \"try not to worry\" while your own voice confidence dipped to 58 — patients pick this up unconsciously.",
+      'You told the patient "try not to worry" while your own voice confidence dipped to 58 — patients pick this up unconsciously.',
     ],
   },
   transcript: [
-    { role: "student", text: "Hi, I'm the medical student on the ward today. Can I ask you some questions?" },
+    {
+      role: "student",
+      text: "Hi, I'm the medical student on the ward today. Can I ask you some questions?",
+    },
     { role: "patient", text: "Yeah, please — this pain is awful." },
-    { role: "student", text: "Where exactly is the pain?", annotation: "Good open start, SOCRATES-site" },
-    { role: "patient", text: "Right in the middle of my chest, it's like a weight crushing me." },
-    { role: "student", text: "Does it go anywhere else?", annotation: "Radiation — correct to ask" },
+    {
+      role: "student",
+      text: "Where exactly is the pain?",
+      annotation: "Good open start, SOCRATES-site",
+    },
+    {
+      role: "patient",
+      text: "Right in the middle of my chest, it's like a weight crushing me.",
+    },
+    {
+      role: "student",
+      text: "Does it go anywhere else?",
+      annotation: "Radiation — correct to ask",
+    },
     { role: "patient", text: "Down my left arm, and into my jaw." },
     { role: "student", text: "And have you had anything like this before?" },
     { role: "patient", text: "No, never like this. I'm scared." },
-    { role: "student", text: "I think you may be having a heart attack — we need to act quickly.", annotation: "Clear communication of working diagnosis" },
+    {
+      role: "student",
+      text: "I think you may be having a heart attack — we need to act quickly.",
+      annotation: "Clear communication of working diagnosis",
+    },
   ],
   written_feedback:
     "Confident, structured history-taking with strong SOCRATES coverage and an appropriate working diagnosis stated to the patient. Family history was missed — a meaningful omission for cardiovascular risk. Delivery biomarkers show steady confidence with a brief anxiety spike during the drug history; your pacing was slightly too fast in the first minute. Overall, the patient would have felt heard and reassured. With one more pass on family history you'd be in the top quartile for this scenario.",
@@ -155,6 +211,9 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
     scenarioId: params.id,
   });
   const [clientMeds, setClientMeds] = useState<PrescriptionMedication[] | null>(null);
+  const [voiceAnalysis, setVoiceAnalysis] = useState<VoiceAnalysis | null>(
+    null,
+  );
 
   useEffect(() => {
     const url =
@@ -167,9 +226,7 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
           setData(json);
         }
       })
-      .catch(() => {
-        // fall back to DEMO_RESULT
-      });
+      .catch(() => {});
   }, [params.id]);
 
   useEffect(() => {
@@ -200,6 +257,36 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
       cancelled = true;
     };
   }, [data.diagnosis?.given, data.prescriptionMedications]);
+
+  // Poll for Thymia voice analysis (runs in background on backend)
+  useEffect(() => {
+    const backendHttp =
+      process.env.NEXT_PUBLIC_BACKEND_HTTP || "http://localhost:8000";
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const poll = () => {
+      fetch(`${backendHttp}/voice-analysis/${encodeURIComponent(params.id)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((json: VoiceAnalysis | null) => {
+          if (cancelled || !json) return;
+          if (json.status === "pending") {
+            timer = setTimeout(poll, 3000);
+          } else {
+            setVoiceAnalysis(json);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) timer = setTimeout(poll, 5000);
+        });
+    };
+
+    poll();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [params.id]);
 
   const scenario = data.scenarioId ? getScenario(data.scenarioId) : undefined;
   const total =
@@ -293,17 +380,6 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
       </section>
 
       <div className="voicehack-print-hide-screen">
-      <section className="mx-auto max-w-6xl px-6 pb-10">
-        <BiomarkerTimeline
-          series={[
-            { name: "Confidence", color: "#2f7a4f", values: data.delivery.timeline.confidence },
-            { name: "Anxiety", color: "#e26d5c", values: data.delivery.timeline.anxiety },
-            { name: "Pacing", color: "#1b2a4e", values: data.delivery.timeline.pacing },
-            { name: "Empathy", color: "#d4a24c", values: data.delivery.timeline.empathy },
-          ]}
-        />
-      </section>
-
       {data.delivery.concordance.length > 0 && (
         <section className="mx-auto max-w-6xl px-6 pb-10">
           <div className="rounded-2xl border border-coral/30 bg-coral/5 p-6">
@@ -325,6 +401,11 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
         </section>
       )}
       </div>
+
+      {/* VOICE CONFIDENCE REPORT (Thymia) */}
+      <section className="mx-auto max-w-6xl px-6 pb-10">
+        <VoiceConfidenceReport analysis={voiceAnalysis} />
+      </section>
 
       <section className="mx-auto grid max-w-6xl gap-6 px-6 pb-10 md:grid-cols-[1fr_340px]">
         <div className="voicehack-print-hide-screen rounded-2xl border border-line bg-white p-6">
@@ -358,7 +439,9 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
                   {l.annotation && (
                     <div
                       className={`mt-1.5 font-hand text-base ${
-                        l.role === "student" ? "text-accent-soft" : "text-accent"
+                        l.role === "student"
+                          ? "text-accent-soft"
+                          : "text-accent"
                       }`}
                     >
                       ✓ {l.annotation}
@@ -447,10 +530,14 @@ function DiagnosisBadge({
   return (
     <div
       className={`rounded-2xl border p-4 ${
-        match ? "border-accent/40 bg-accent-soft" : "border-coral/40 bg-coral/10"
+        match
+          ? "border-accent/40 bg-accent-soft"
+          : "border-coral/40 bg-coral/10"
       }`}
     >
-      <p className={`font-hand text-xl ${match ? "text-accent" : "text-coral"}`}>
+      <p
+        className={`font-hand text-xl ${match ? "text-accent" : "text-coral"}`}
+      >
         {match ? "diagnosis correct" : "diagnosis missed"}
       </p>
       <p className="mt-1 text-sm text-ink">
@@ -459,6 +546,260 @@ function DiagnosisBadge({
       <p className="text-sm text-ink">
         <span className="text-ink-soft">Actual:</span> {correct}
       </p>
+    </div>
+  );
+}
+
+function ScoreBar({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: number;
+  color: string;
+}) {
+  const pct = Math.round(value * 100);
+  const level = pct < 33 ? "Low" : pct < 66 ? "Moderate" : "High";
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-ink">{label}</span>
+        <span className="text-ink-soft">
+          {level} ({pct}%)
+        </span>
+      </div>
+      <div className="h-2 w-full rounded-full bg-paper-2">
+        <div
+          className="h-2 rounded-full transition-all duration-500"
+          style={{ width: `${pct}%`, backgroundColor: color }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function VoiceConfidenceReport({
+  analysis,
+}: {
+  analysis: VoiceAnalysis | null;
+}) {
+  if (!analysis) {
+    return (
+      <div className="rounded-2xl border border-dashed border-line bg-paper-2 p-6">
+        <div className="flex items-center gap-3">
+          <Loader2 className="h-5 w-5 animate-spin text-ink-soft" />
+          <div>
+            <p className="font-hand text-2xl text-accent">
+              voice confidence report
+            </p>
+            <p className="text-sm text-ink-soft">
+              Analysing your voice patterns with Thymia...
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (analysis.error) {
+    return (
+      <div className="rounded-2xl border border-line bg-paper-2 p-6">
+        <p className="font-hand text-2xl text-accent">
+          voice confidence report
+        </p>
+        <p className="mt-2 text-sm text-ink-soft">{analysis.error}</p>
+      </div>
+    );
+  }
+
+  if (!analysis.overall) return null;
+
+  const o = analysis.overall;
+  const fmt = (v: number) => `${Math.round(v * 100)}%`;
+  const level = (v: number) =>
+    v < 0.33 ? "Low" : v < 0.66 ? "Moderate" : "High";
+
+  return (
+    <div className="rounded-2xl border border-line bg-white p-6">
+      <div className="flex items-center gap-2">
+        <Activity className="h-5 w-5 text-accent" />
+        <p className="font-hand text-2xl text-accent">
+          voice confidence report
+        </p>
+        <span className="ml-auto text-xs text-ink-soft">Powered by Thymia</span>
+      </div>
+      <p className="mt-1 text-sm text-ink-soft">
+        Vocal biomarker analysis of your voice during the consultation.
+      </p>
+
+      {/* RAW DATA TABLE */}
+      <div className="mt-5 overflow-hidden rounded-xl border border-line">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-line bg-paper-2">
+              <th className="px-4 py-2 text-left font-medium text-ink-soft">
+                Metric
+              </th>
+              <th className="px-4 py-2 text-right font-medium text-ink-soft">
+                Score
+              </th>
+              <th className="px-4 py-2 text-left font-medium text-ink-soft">
+                Level
+              </th>
+              <th className="hidden px-4 py-2 text-left font-medium text-ink-soft sm:table-cell">
+                What it measures
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="border-b border-line">
+              <td className="px-4 py-2 font-medium text-ink">Nervousness</td>
+              <td className="px-4 py-2 text-right tabular-nums text-ink">
+                {fmt(o.nervousness)}
+              </td>
+              <td className="px-4 py-2">
+                <span
+                  className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${o.nervousness < 0.33 ? "bg-accent-soft text-accent" : o.nervousness < 0.66 ? "bg-gold/20 text-gold" : "bg-coral/10 text-coral"}`}
+                >
+                  {level(o.nervousness)}
+                </span>
+              </td>
+              <td className="hidden px-4 py-2 text-ink-soft sm:table-cell">
+                Emotional activation in voice
+              </td>
+            </tr>
+            <tr className="border-b border-line">
+              <td className="px-4 py-2 font-medium text-ink">Emotional tone</td>
+              <td className="px-4 py-2 text-right tabular-nums text-ink">
+                {fmt(o.voice_strain)}
+              </td>
+              <td className="px-4 py-2">
+                <span
+                  className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${o.voice_strain < 0.33 ? "bg-accent-soft text-accent" : o.voice_strain < 0.66 ? "bg-gold/20 text-gold" : "bg-coral/10 text-coral"}`}
+                >
+                  {level(o.voice_strain)}
+                </span>
+              </td>
+              <td className="hidden px-4 py-2 text-ink-soft sm:table-cell">
+                Sadness / concern detected in voice
+              </td>
+            </tr>
+            <tr>
+              <td className="px-4 py-2 font-medium text-ink">Hesitancy</td>
+              <td className="px-4 py-2 text-right tabular-nums text-ink">
+                {fmt(o.hesitancy)}
+              </td>
+              <td className="px-4 py-2">
+                <span
+                  className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${o.hesitancy < 0.33 ? "bg-accent-soft text-accent" : o.hesitancy < 0.66 ? "bg-gold/20 text-gold" : "bg-coral/10 text-coral"}`}
+                >
+                  {level(o.hesitancy)}
+                </span>
+              </td>
+              <td className="hidden px-4 py-2 text-ink-soft sm:table-cell">
+                Uncertainty in vocal delivery
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* PER-TURN BREAKDOWN */}
+      {analysis.sections && analysis.sections.length > 0 && (
+        <div className="mt-5 space-y-3">
+          <p className="text-xs font-medium uppercase tracking-wider text-ink-soft">
+            Per-turn vocal analysis
+          </p>
+          {analysis.sections.map((s, i) => (
+            <div
+              key={i}
+              className="rounded-xl border border-line bg-paper-2 p-4"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-ink">
+                  Turn {s.turn}
+                </span>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${s.alert_level === "none" ? "bg-accent-soft text-accent" : s.alert_level === "low" ? "bg-gold/20 text-gold" : "bg-coral/10 text-coral"}`}
+                  >
+                    {s.alert_level}
+                  </span>
+                  <span className="text-xs text-ink-soft">
+                    {s.confidence} confidence
+                  </span>
+                </div>
+              </div>
+              {/* Emotion scores */}
+              {s.emotions && Object.keys(s.emotions).length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {Object.entries(s.emotions)
+                    .sort(([, a], [, b]) => b - a)
+                    .map(([emotion, score]) => (
+                      <span
+                        key={emotion}
+                        className="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-0.5 text-xs border border-line"
+                      >
+                        <span className="text-ink-soft">{emotion}</span>
+                        <span className="font-medium tabular-nums text-ink">
+                          {fmt(score)}
+                        </span>
+                      </span>
+                    ))}
+                </div>
+              )}
+              {s.rationale && (
+                <p className="mt-2 text-xs text-ink-soft leading-relaxed">
+                  {s.rationale}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* PEAK / CALMEST MOMENTS */}
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        {analysis.peak_stress_moment && (
+          <div className="flex items-start gap-2 rounded-xl border border-coral/30 bg-coral/5 p-3">
+            <TrendingUp className="mt-0.5 h-4 w-4 shrink-0 text-coral" />
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wider text-coral">
+                Most nervous
+              </p>
+              <p className="mt-0.5 text-sm text-ink">
+                {analysis.peak_stress_moment}
+              </p>
+            </div>
+          </div>
+        )}
+        {analysis.calmest_moment && (
+          <div className="flex items-start gap-2 rounded-xl border border-accent/30 bg-accent-soft p-3">
+            <TrendingDown className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wider text-accent">
+                Most calm
+              </p>
+              <p className="mt-0.5 text-sm text-ink">
+                {analysis.calmest_moment}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* LLM INTERPRETATION */}
+      {analysis.llm_interpretation && (
+        <div className="mt-5 rounded-xl border border-line bg-paper-2 p-4">
+          <p className="text-xs font-medium uppercase tracking-wider text-ink-soft">
+            Voice coach analysis
+          </p>
+          <p className="mt-2 text-sm text-ink leading-relaxed">
+            {analysis.llm_interpretation}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

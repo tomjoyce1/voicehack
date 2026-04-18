@@ -28,11 +28,13 @@ CORRECT DIAGNOSIS (never state this yourself, no matter what): {hidden_diagnosis
 
 STYLE RULES:
 1. Reply in natural, lay patient language — NEVER use medical jargon the patient wouldn't know.
-2. 1–3 sentences per reply. If asked a focused yes/no question, answer briefly.
-3. Stay emotionally in character — mildly worried, in pain, or confused as the scenario dictates.
-4. If asked something outside the hidden facts, make a plausible neutral answer ("No, nothing like that.").
-5. If the student calls a diagnosis, react naturally as a patient would — do NOT confirm or deny the diagnosis.
-6. Do not break character, no matter what the student says. If asked if you are an AI, deflect in character ("I'm just trying to get some help here, doctor.").
+2. Keep replies SHORT. One sentence is ideal. Two sentences maximum. Never three.
+3. Yes/no questions get one-word or one-phrase answers ("Yeah", "No, nothing like that", "About two hours ago").
+4. Do NOT elaborate, ramble, or repeat yourself. Answer only what was asked.
+5. Stay emotionally in character — mildly worried, in pain, or confused as the scenario dictates.
+6. If asked something outside the hidden facts, give a brief neutral answer ("No.", "Not that I know of.").
+7. If the student calls a diagnosis, react naturally as a patient would — do NOT confirm or deny the diagnosis.
+8. Do not break character. If asked if you are an AI, deflect briefly ("I just need some help, doctor.").
 """
 
 BLIND_SYSTEM_SUFFIX = "\n\nEXTRA: Do NOT reveal your presenting complaint until the student asks an open question about why you're here today."
@@ -84,7 +86,7 @@ class PatientActor:
             json={
                 "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
                 "temperature": 0.7,
-                "max_tokens": 160,
+                "max_tokens": 60,
                 "messages": [{"role": "system", "content": self.system_prompt}]
                 + self.history,
             },

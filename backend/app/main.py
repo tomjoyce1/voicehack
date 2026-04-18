@@ -25,9 +25,11 @@ from .patient_actor import PatientActor
 from .scenarios import get_scenario
 from .scoring import score_session
 from .stt import StudentSTT
+from .thymia import ThymiaSidecar, generate_voice_interpretation, thymia_result_to_dict
 from .tts import synthesize
 
-load_dotenv()
+load_dotenv()  # backend/.env
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"), override=False)  # root .env fallback
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -50,6 +52,7 @@ app.add_middleware(
 )
 
 RESULTS: Dict[str, dict] = {}
+VOICE_ANALYSIS: Dict[str, dict] = {}
 
 
 @app.get("/health")
@@ -60,6 +63,14 @@ async def health():
 @app.get("/results/{session_id}")
 async def results(session_id: str):
     return RESULTS.get(session_id, {"error": "not_found"})
+
+
+@app.get("/voice-analysis/{session_id}")
+async def voice_analysis(session_id: str):
+    result = VOICE_ANALYSIS.get(session_id)
+    if result is None:
+        return {"status": "pending"}
+    return result
 
 
 @app.websocket("/ws/session/{session_id}")
@@ -73,6 +84,7 @@ async def session_ws(ws: WebSocket, session_id: str):
 
     # --- STT setup with interim transcript forwarding ---
     async def on_interim(text: str):
+        log.debug("[%s] STT interim → frontend: '%s'", session_id, text)
         await send({
             "type": "transcript",
             "role": "student",
@@ -95,6 +107,13 @@ async def session_ws(ws: WebSocket, session_id: str):
     bio_timeline: Dict[str, List[float]] = {
         "confidence": [], "anxiety": [], "pacing": [], "empathy": [],
     }
+
+    # --- Thymia voice biomarker sidecar (background, zero-cost) ---
+    thymia_sidecar: Optional[ThymiaSidecar] = None
+    thymia_key = os.getenv("THYMIA_API_KEY")
+    if thymia_key:
+        thymia_sidecar = ThymiaSidecar(api_key=thymia_key, session_id=session_id)
+        await thymia_sidecar.start()
 
     # --- Interruption tracking ---
     active_tts_task: Optional[asyncio.Task] = None
@@ -153,6 +172,8 @@ async def session_ws(ws: WebSocket, session_id: str):
             log.error("[%s] LLM error: %s", session_id, e)
             return
         transcript_log.append({"role": "patient", "text": reply})
+        if thymia_sidecar:
+            thymia_sidecar.push_transcript(reply, role="agent")
         await send({
             "type": "transcript",
             "role": "patient",
@@ -173,6 +194,8 @@ async def session_ws(ws: WebSocket, session_id: str):
         async for utt in stt.utterances():
             log.info("[%s] STT utterance: '%s'", session_id, utt)
             transcript_log.append({"role": "student", "text": utt})
+            if thymia_sidecar:
+                thymia_sidecar.push_transcript(utt, role="user")
             await send({
                 "type": "transcript",
                 "role": "student",
@@ -223,6 +246,8 @@ async def session_ws(ws: WebSocket, session_id: str):
                     log.debug("[%s] Audio #%d: %d bytes (%d samples@16kHz)",
                               session_id, audio_count, len(pcm), len(pcm) // 2)
                 await stt.push(pcm)
+                if thymia_sidecar:
+                    thymia_sidecar.push_audio(pcm)
 
             elif t == "diagnosis":
                 diagnosis = (msg.get("text") or "").strip()
@@ -234,6 +259,34 @@ async def session_ws(ws: WebSocket, session_id: str):
                 RESULTS[session_id] = result
                 RESULTS[scenario_id or session_id] = result
                 await send({"type": "scored", "sessionId": session_id})
+
+                # Build Thymia voice analysis from accumulated snapshots
+                if thymia_sidecar:
+                    log.info("[%s] Building Thymia voice analysis (%d snapshots)...",
+                             session_id, len(thymia_sidecar._snapshots))
+
+                    async def _run_thymia():
+                        try:
+                            tr = thymia_sidecar.build_result(transcript_log)
+                            if not tr.error:
+                                tr.llm_interpretation = await generate_voice_interpretation(
+                                    tr, transcript_log,
+                                )
+                            result_dict = thymia_result_to_dict(tr)
+                            VOICE_ANALYSIS[session_id] = result_dict
+                            VOICE_ANALYSIS[scenario_id or session_id] = result_dict
+                            log.info("[%s] Thymia analysis complete: %s",
+                                     session_id, "error" if tr.error else "success")
+                        except Exception as e:
+                            log.error("[%s] Thymia analysis failed: %s", session_id, e)
+                            VOICE_ANALYSIS[session_id] = {"error": str(e)}
+
+                    asyncio.create_task(_run_thymia())
+                else:
+                    log.info("[%s] No THYMIA_API_KEY — skipping voice analysis", session_id)
+                    VOICE_ANALYSIS[session_id] = {"error": "No THYMIA_API_KEY configured"}
+                    VOICE_ANALYSIS[scenario_id or session_id] = VOICE_ANALYSIS[session_id]
+
                 break
 
             elif t == "stop":
@@ -255,6 +308,8 @@ async def session_ws(ws: WebSocket, session_id: str):
             active_turn_task.cancel()
         stt_task.cancel()
         await stt.stop()
+        if thymia_sidecar:
+            await thymia_sidecar.stop()
         if actor:
             await actor.close()
         try:

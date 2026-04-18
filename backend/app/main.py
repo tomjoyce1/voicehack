@@ -71,9 +71,18 @@ async def session_ws(ws: WebSocket, session_id: str):
     actor: Optional[PatientActor] = None
     audio_count = 0
 
-    # --- STT setup ---
+    # --- STT setup with interim transcript forwarding ---
+    async def on_interim(text: str):
+        await send({
+            "type": "transcript",
+            "role": "student",
+            "text": text,
+            "final": False,
+            "ts": int(time.time() * 1000),
+        })
+
     log.info("[%s] Starting Gradium STT...", session_id)
-    stt = StudentSTT()
+    stt = StudentSTT(on_interim=on_interim)
     try:
         await stt.start()
         log.info("[%s] STT ready", session_id)
@@ -100,16 +109,14 @@ async def session_ws(ws: WebSocket, session_id: str):
     async def cancel_patient_speech():
         """Cancel any in-progress LLM + TTS and tell frontend to stop playback."""
         nonlocal active_tts_task, active_turn_task
-        cancelled = False
         if active_tts_task and not active_tts_task.done():
             active_tts_task.cancel()
-            cancelled = True
         if active_turn_task and not active_turn_task.done():
             active_turn_task.cancel()
-            cancelled = True
-        if cancelled:
-            log.info("[%s] Interrupted patient speech", session_id)
-            await send({"type": "stop_audio", "ts": int(time.time() * 1000)})
+        # Always tell frontend to stop — backend may have finished sending
+        # chunks but frontend is still playing buffered audio.
+        log.info("[%s] Interrupting patient (stop_audio)", session_id)
+        await send({"type": "stop_audio", "ts": int(time.time() * 1000)})
 
     async def tts_and_stream(text: str):
         log.info("[%s] TTS synthesizing: %s", session_id, text[:80])

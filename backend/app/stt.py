@@ -44,11 +44,16 @@ _END = object()
 
 
 class StudentSTT:
-    def __init__(self):
+    def __init__(self, on_interim=None):
+        """
+        on_interim: optional async callback(text: str) called on each interim
+                    word from Gradium, before turn-end flush.
+        """
         self._api_key = os.getenv("GRADIUM_API_KEY")
         if not self._api_key:
             raise RuntimeError("GRADIUM_API_KEY is required")
         self._queue: asyncio.Queue[str] = asyncio.Queue()
+        self._on_interim = on_interim
         self._ws = None
         self._ws_task: Optional[asyncio.Task] = None
         # Single send queue: bytes for audio frames, _FLUSH for flush, _END for end
@@ -148,7 +153,7 @@ class StudentSTT:
         has_speech = False
         silence_count = 0
         SILENCE_THRESHOLD = 0.5
-        SILENCE_FRAMES_NEEDED = 3
+        SILENCE_FRAMES_NEEDED = 2
         pending_flush = False
         msg_count = 0
 
@@ -167,6 +172,12 @@ class StudentSTT:
                         has_speech = True
                         silence_count = 0
                         log.info("STT text: '%s' (parts: %d)", text, len(transcript_parts))
+                        if self._on_interim:
+                            interim = " ".join(transcript_parts).strip()
+                            try:
+                                await self._on_interim(interim)
+                            except Exception:
+                                pass
 
                 elif msg_type == "step":
                     vad = data.get("vad", [])

@@ -23,6 +23,11 @@ export type PatientAudioEvent = {
   ts: number;
 };
 
+export type StopAudioEvent = {
+  type: "stop_audio";
+  ts: number;
+};
+
 export type ScoredEvent = {
   type: "scored";
   sessionId: string;
@@ -32,6 +37,7 @@ export type ServerEvent =
   | TranscriptEvent
   | BiomarkerEvent
   | PatientAudioEvent
+  | StopAudioEvent
   | ScoredEvent;
 
 export type ClientEvent =
@@ -50,6 +56,7 @@ export class SessionClient {
   onClose?: () => void;
   private audioCtx: AudioContext | null = null;
   private scheduledAt = 0;
+  private activeSources: AudioBufferSourceNode[] = [];
 
   constructor(private sessionId: string) {}
 
@@ -65,6 +72,8 @@ export class SessionClient {
         const msg = JSON.parse(ev.data) as ServerEvent;
         if (msg.type === "patient_audio") {
           this.schedulePatientAudio(msg.data);
+        } else if (msg.type === "stop_audio") {
+          this.stopPatientAudio();
         }
         this.onEvent?.(msg);
       } catch {
@@ -103,6 +112,20 @@ export class SessionClient {
     return this.audioCtx;
   }
 
+  stopPatientAudio() {
+    for (const src of this.activeSources) {
+      try {
+        src.stop();
+      } catch {
+        // already stopped
+      }
+    }
+    this.activeSources = [];
+    if (this.audioCtx) {
+      this.scheduledAt = this.audioCtx.currentTime;
+    }
+  }
+
   private schedulePatientAudio(base64: string) {
     const ctx = this.ensureAudioCtx();
     const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
@@ -120,5 +143,10 @@ export class SessionClient {
     const start = Math.max(now, this.scheduledAt);
     src.start(start);
     this.scheduledAt = start + buf.duration;
+    this.activeSources.push(src);
+    src.onended = () => {
+      const idx = this.activeSources.indexOf(src);
+      if (idx >= 0) this.activeSources.splice(idx, 1);
+    };
   }
 }

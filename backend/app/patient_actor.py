@@ -68,29 +68,32 @@ class PatientActor:
         self._groq_key = os.getenv("GROQ_API_KEY")
         if not self._groq_key:
             raise RuntimeError("GROQ_API_KEY is required")
+        self._client = httpx.AsyncClient(timeout=15.0)
 
     def opening_line(self) -> str:
         return self.scenario.presenting_line if not self.blind else "Hi doctor."
 
     async def reply(self, student_utterance: str) -> str:
         self.history.append({"role": "user", "content": student_utterance})
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                GROQ_URL,
-                headers={
-                    "Authorization": f"Bearer {self._groq_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
-                    "temperature": 0.7,
-                    "max_tokens": 160,
-                    "messages": [{"role": "system", "content": self.system_prompt}]
-                    + self.history,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            text = (data["choices"][0]["message"]["content"] or "").strip()
+        resp = await self._client.post(
+            GROQ_URL,
+            headers={
+                "Authorization": f"Bearer {self._groq_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+                "temperature": 0.7,
+                "max_tokens": 160,
+                "messages": [{"role": "system", "content": self.system_prompt}]
+                + self.history,
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        text = (data["choices"][0]["message"]["content"] or "").strip()
         self.history.append({"role": "assistant", "content": text})
         return text
+
+    async def close(self):
+        await self._client.aclose()

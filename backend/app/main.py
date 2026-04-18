@@ -24,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .patient_actor import PatientActor
 from .scenarios import get_scenario
 from .scoring import score_session
+from .speechmatics_insights import run_speechmatics_insights
 from .stt import StudentSTT
 from .thymia import ThymiaSidecar, generate_voice_interpretation, thymia_result_to_dict
 from .tts import synthesize
@@ -53,6 +54,7 @@ app.add_middleware(
 
 RESULTS: Dict[str, dict] = {}
 VOICE_ANALYSIS: Dict[str, dict] = {}
+SPEECHMATICS: Dict[str, dict] = {}
 
 
 @app.get("/health")
@@ -73,6 +75,14 @@ async def voice_analysis(session_id: str):
     return result
 
 
+@app.get("/speechmatics/{session_id}")
+async def speechmatics(session_id: str):
+    result = SPEECHMATICS.get(session_id)
+    if result is None:
+        return {"status": "pending"}
+    return result
+
+
 @app.websocket("/ws/session/{session_id}")
 async def session_ws(ws: WebSocket, session_id: str):
     await ws.accept()
@@ -81,6 +91,7 @@ async def session_ws(ws: WebSocket, session_id: str):
     scenario_id: Optional[str] = None
     actor: Optional[PatientActor] = None
     audio_count = 0
+    student_audio_buffer = bytearray()
 
     # --- STT setup with interim transcript forwarding ---
     async def on_interim(text: str):
@@ -246,6 +257,7 @@ async def session_ws(ws: WebSocket, session_id: str):
                     log.debug("[%s] Audio #%d: %d bytes (%d samples@16kHz)",
                               session_id, audio_count, len(pcm), len(pcm) // 2)
                 await stt.push(pcm)
+                student_audio_buffer.extend(pcm)
                 if thymia_sidecar:
                     thymia_sidecar.push_audio(pcm)
 
@@ -259,6 +271,37 @@ async def session_ws(ws: WebSocket, session_id: str):
                 RESULTS[session_id] = result
                 RESULTS[scenario_id or session_id] = result
                 await send({"type": "scored", "sessionId": session_id})
+
+                # --- Speechmatics post-session insights (fire-and-forget) ---
+                SPEECHMATICS[session_id] = {"status": "pending"}
+                SPEECHMATICS[scenario_id or session_id] = SPEECHMATICS[session_id]
+                audio_snapshot = bytes(student_audio_buffer)
+                scenario_snapshot = sc
+                sid_snapshot = session_id
+                scid_snapshot = scenario_id or session_id
+
+                async def _run_speechmatics():
+                    try:
+                        log.info("[%s] Speechmatics insights starting (%d bytes)...",
+                                 sid_snapshot, len(audio_snapshot))
+                        sx = await run_speechmatics_insights(audio_snapshot, scenario_snapshot)
+                        SPEECHMATICS[sid_snapshot] = sx
+                        SPEECHMATICS[scid_snapshot] = sx
+                        # Merge medical_vocab into main RESULTS so the existing
+                        # results-page card lights up without any extra polling.
+                        if sx.get("status") == "ok" and sx.get("medical_vocab"):
+                            for key in (sid_snapshot, scid_snapshot):
+                                if key in RESULTS:
+                                    RESULTS[key]["medical_vocab"] = sx["medical_vocab"]
+                                    RESULTS[key]["speechmatics"] = sx
+                        log.info("[%s] Speechmatics insights done: %s",
+                                 sid_snapshot, sx.get("status"))
+                    except Exception as e:
+                        log.error("[%s] Speechmatics insights failed: %s", sid_snapshot, e)
+                        SPEECHMATICS[sid_snapshot] = {"status": "error", "reason": str(e)}
+                        SPEECHMATICS[scid_snapshot] = SPEECHMATICS[sid_snapshot]
+
+                asyncio.create_task(_run_speechmatics())
 
                 # Build Thymia voice analysis from accumulated snapshots
                 if thymia_sidecar:

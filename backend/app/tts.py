@@ -25,7 +25,7 @@ async def synthesize(text: str) -> AsyncIterator[bytes]:
 
     async with websockets.connect(
         GRADIUM_TTS_WS,
-        extra_headers={"x-api-key": api_key},
+        additional_headers={"x-api-key": api_key},
         max_size=None,
     ) as ws:
         await ws.send(json.dumps({

@@ -74,7 +74,7 @@ class StudentSTT:
         try:
             async with websockets.connect(
                 GRADIUM_STT_WS,
-                extra_headers={"x-api-key": self._api_key},
+                additional_headers={"x-api-key": self._api_key},
                 max_size=None,
             ) as ws:
                 self._ws = ws

@@ -204,22 +204,14 @@ async def _llm_feedback(
     checklist: List[dict],
     bio: Dict[str, List[float]],
 ) -> str:
-    if os.getenv("DEMO_MODE", "0") == "1" or not os.getenv("OPENAI_API_KEY"):
-        hits = [c["text"] for c in checklist if c["hit"]]
-        miss = [c["text"] for c in checklist if not c["hit"]]
-        hit_s = ", ".join(hits) if hits else "few of the key areas"
-        miss_s = ", ".join(miss) if miss else "nothing major"
-        return (
-            f"Good coverage of {hit_s}. You missed {miss_s}. "
-            f"Delivery held up — confidence trended upward, anxiety dipped after the first minute. "
-            f"Overall a solid attempt at {scenario.chief_complaint.lower()}."
-        )
-    try:
-        from openai import AsyncOpenAI
+    import httpx
 
-        client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        transcript_text = "\n".join(f"{t['role'].upper()}: {t['text']}" for t in transcript)
-        prompt = f"""You are an OSCE examiner writing a short (4-6 sentence) feedback note for a medical student.
+    groq_key = os.getenv("GROQ_API_KEY")
+    if not groq_key:
+        raise RuntimeError("GROQ_API_KEY is required")
+
+    transcript_text = "\n".join(f"{t['role'].upper()}: {t['text']}" for t in transcript)
+    prompt = f"""You are an OSCE examiner writing a short (4-6 sentence) feedback note for a medical student.
 SCENARIO: {scenario.name}, {scenario.age}{scenario.sex} — {scenario.chief_complaint}.
 CORRECT DIAGNOSIS: {scenario.hidden_diagnosis}.
 STUDENT'S DIAGNOSIS: {diagnosis}.
@@ -233,13 +225,21 @@ REQUIRED QUESTIONS MISSED: {[c['text'] for c in checklist if not c['hit']]}
 DELIVERY BIOMARKERS (means): confidence {sum(bio.get('confidence',[60]))/max(1,len(bio.get('confidence',[60]))):.0f}, anxiety {sum(bio.get('anxiety',[40]))/max(1,len(bio.get('anxiety',[40]))):.0f}, pacing {sum(bio.get('pacing',[60]))/max(1,len(bio.get('pacing',[60]))):.0f}, empathy {sum(bio.get('empathy',[60]))/max(1,len(bio.get('empathy',[60]))):.0f}.
 
 Give warm but directive feedback. Reference specific questions they covered or missed, and weave in the biomarker delivery insight. No bullet points — flowing prose."""
-        resp = await client.chat.completions.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            temperature=0.4,
-            max_tokens=300,
-            messages=[{"role": "user", "content": prompt}],
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {groq_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+                "temperature": 0.4,
+                "max_tokens": 300,
+                "messages": [{"role": "user", "content": prompt}],
+            },
         )
-        return (resp.choices[0].message.content or "").strip()
-    except Exception as e:
-        log.warning("LLM feedback failed: %s", e)
-        return "Feedback unavailable in offline mode."
+        resp.raise_for_status()
+        data = resp.json()
+        return (data["choices"][0]["message"]["content"] or "").strip()

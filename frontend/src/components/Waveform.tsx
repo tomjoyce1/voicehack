@@ -42,7 +42,7 @@ export function Waveform({ amplitude, speaking, tone = "accent" }: Props) {
 
       const cx = w / 2;
       const cy = h / 2;
-      const baseR = Math.min(w, h) * 0.32;
+      const baseR = Math.max(12, Math.min(w, h) * 0.32);
       tRef.current += 0.04;
       const amp = ampRef.current;
 

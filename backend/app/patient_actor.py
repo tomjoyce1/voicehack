@@ -1,11 +1,11 @@
-"""Patient actor LLM — given a scenario profile, generates in-character replies."""
+"""Patient actor LLM — given a scenario profile, generates in-character replies via Groq."""
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
-import random
-from typing import List, Optional
+from typing import List
+
+import httpx
 
 from .scenarios import Scenario
 
@@ -37,6 +37,8 @@ STYLE RULES:
 
 BLIND_SYSTEM_SUFFIX = "\n\nEXTRA: Do NOT reveal your presenting complaint until the student asks an open question about why you're here today."
 
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+
 
 def build_system_prompt(scenario: Scenario, blind: bool = False) -> str:
     prompt = SYSTEM_PROMPT_TEMPLATE.format(
@@ -56,84 +58,39 @@ def build_system_prompt(scenario: Scenario, blind: bool = False) -> str:
 
 
 class PatientActor:
-    """Wraps OpenAI chat for the patient. Falls back to scripted replies in demo mode."""
+    """Wraps Groq LLM for the patient."""
 
     def __init__(self, scenario: Scenario, blind: bool = False):
         self.scenario = scenario
         self.blind = blind
         self.history: List[dict] = []
         self.system_prompt = build_system_prompt(scenario, blind)
-        self.demo_mode = os.getenv("DEMO_MODE", "0") == "1"
-        self._client = None
-        if not self.demo_mode and os.getenv("OPENAI_API_KEY"):
-            try:
-                from openai import AsyncOpenAI
-
-                self._client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-            except Exception as e:
-                log.warning("OpenAI client unavailable, falling back to demo: %s", e)
-                self.demo_mode = True
-        else:
-            self.demo_mode = True
+        self._groq_key = os.getenv("GROQ_API_KEY")
+        if not self._groq_key:
+            raise RuntimeError("GROQ_API_KEY is required")
 
     def opening_line(self) -> str:
         return self.scenario.presenting_line if not self.blind else "Hi doctor."
 
     async def reply(self, student_utterance: str) -> str:
         self.history.append({"role": "user", "content": student_utterance})
-        if self.demo_mode or not self._client:
-            text = self._demo_reply(student_utterance)
-        else:
-            try:
-                resp = await self._client.chat.completions.create(
-                    model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-                    temperature=0.7,
-                    max_tokens=160,
-                    messages=[{"role": "system", "content": self.system_prompt}]
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                GROQ_URL,
+                headers={
+                    "Authorization": f"Bearer {self._groq_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+                    "temperature": 0.7,
+                    "max_tokens": 160,
+                    "messages": [{"role": "system", "content": self.system_prompt}]
                     + self.history,
-                )
-                text = (resp.choices[0].message.content or "").strip()
-            except Exception as e:
-                log.warning("OpenAI reply failed, using demo fallback: %s", e)
-                text = self._demo_reply(student_utterance)
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            text = (data["choices"][0]["message"]["content"] or "").strip()
         self.history.append({"role": "assistant", "content": text})
         return text
-
-    def _demo_reply(self, q: str) -> str:
-        ql = q.lower()
-        s = self.scenario
-        if any(k in ql for k in ("hi", "hello", "good morning", "how are you", "introduce")):
-            return s.presenting_line
-        if any(k in ql for k in ("where", "site", "location", "whereabouts")):
-            return self._first_symptom_match(["pain", "site", "where", "left", "right", "central"])
-        if any(k in ql for k in ("radiat", "move", "spread", "anywhere else")):
-            return self._first_symptom_match(["radiat", "jaw", "arm", "move", "migrat"])
-        if any(k in ql for k in ("when", "start", "onset", "begin", "how long")):
-            return self._first_symptom_match(["start", "hour", "day", "ago", "onset", "thunderclap"])
-        if any(k in ql for k in ("severity", "scale", "out of 10", "how bad", "describe")):
-            return self._first_symptom_match(["9/10", "severity", "crush", "worst"])
-        if any(k in ql for k in ("medication", "drug", "tablet", "inhaler")):
-            return self._first_history_match(["ramipril", "metformin", "inhaler", "pill", "tiotropium"])
-        if any(k in ql for k in ("smoke", "alcohol", "drink")):
-            return self._first_history_match(["smoker", "pack-years", "ex-smoker"])
-        if any(k in ql for k in ("family history", "father", "mother", "parent", "relative")):
-            return self._first_history_match(["father", "mother", "aneurysm", "mi"])
-        if any(k in ql for k in ("travel", "flight", "plane", "immobil")):
-            return self._first_history_match(["flight", "plane", "long-haul"])
-        if any(k in ql for k in ("diagnos", "think", "suspect", "heart attack", "asthma", "appendicitis")):
-            return "That sounds scary — is that what's happening to me, doctor?"
-        # generic fallback — pick a random uncovered hidden symptom
-        pool = s.symptoms + s.history
-        return f"Well... {random.choice(pool).lower()}." if pool else "I'm not sure, doctor."
-
-    def _first_symptom_match(self, keys: List[str]) -> str:
-        for sym in self.scenario.symptoms:
-            if any(k in sym.lower() for k in keys):
-                return f"Yes — {sym.lower()}."
-        return self.scenario.symptoms[0].capitalize() if self.scenario.symptoms else "I don't know."
-
-    def _first_history_match(self, keys: List[str]) -> str:
-        for h in self.scenario.history:
-            if any(k in h.lower() for k in keys):
-                return f"{h}."
-        return "No, nothing like that."

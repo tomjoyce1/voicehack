@@ -14,10 +14,28 @@ const caveat = Caveat({
   display: "swap",
 });
 
+const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL?.trim() || "http://localhost:3000";
+
+const title = "PatientSim — OSCE practice with an AI patient";
+const description =
+  "Voice-first AI standardised patients for medical students. Practice OSCE exams with clinical scoring and objective biometric feedback on how you sound.";
+
 export const metadata: Metadata = {
-  title: "OSCEai — Practice OSCEs with an AI patient",
-  description:
-    "AI standardised patients for medical students. Practice OSCE exams with voice-first AI, clinical scoring, and objective biometric feedback on your delivery.",
+  metadataBase: new URL(siteUrl),
+  title,
+  description,
+  openGraph: {
+    title,
+    description,
+    siteName: "PatientSim",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title,
+    description,
+  },
 };
 
 export default function RootLayout({

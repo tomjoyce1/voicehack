@@ -163,10 +163,13 @@ export default function SessionPage({ params }: { params: { id: string } }) {
     <main className="flex h-screen flex-col bg-white">
       {/* TOP BAR */}
       <div className="flex h-16 shrink-0 items-center justify-between border-b border-line px-6">
-        <div className="flex items-center gap-4">
-          <Logo />
-          <span className="h-5 w-px bg-line" />
-          <span className="text-sm text-ink-soft">
+        <div className="flex min-w-0 items-center gap-4">
+          <div className="flex min-w-0 shrink-0 flex-col gap-0.5">
+            <Logo />
+            <span className="text-xs text-ink-soft">PatientSim · live session</span>
+          </div>
+          <span className="h-5 w-px shrink-0 bg-line" />
+          <span className="min-w-0 truncate text-sm text-ink-soft">
             {blind
               ? "Blind patient"
               : scenario
@@ -211,8 +214,8 @@ export default function SessionPage({ params }: { params: { id: string } }) {
 
       {/* BIOMARKER STRIP */}
       <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b border-line bg-paper-2 px-6 py-3">
-        <span className="font-hand text-lg text-coral mr-1">
-          how you&apos;re delivering
+        <span className="mr-2 shrink-0 text-xs font-semibold uppercase tracking-wide text-ink-soft">
+          Delivery signals
         </span>
         <BiomarkerPill
           label="Confidence"
@@ -288,7 +291,7 @@ export default function SessionPage({ params }: { params: { id: string } }) {
         {/* RIGHT: transcript */}
         <div className="flex min-h-0 flex-col">
           <div className="flex shrink-0 items-center justify-between border-b border-line px-6 py-3">
-            <h2 className="font-hand text-2xl text-accent">transcript</h2>
+            <h2 className="font-hand text-2xl text-accent">Transcript</h2>
             <span className="text-xs text-ink-soft">
               Speechmatics · medical domain
             </span>
@@ -296,8 +299,8 @@ export default function SessionPage({ params }: { params: { id: string } }) {
           <div className="flex-1 overflow-y-auto px-6 py-4">
             {transcript.length === 0 && (
               <div className="mx-auto max-w-sm rounded-xl border border-dashed border-line bg-paper-2 p-6 text-center text-sm text-ink-soft">
-                Turn on your mic and introduce yourself. The patient will reply
-                in character.
+                Turn on your mic and introduce yourself. PatientSim streams the
+                patient&apos;s replies in character as soon as audio is detected.
               </div>
             )}
             <div className="space-y-4">

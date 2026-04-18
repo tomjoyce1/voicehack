@@ -1,4 +1,4 @@
-"""OSCEai backend — FastAPI WebSocket session server.
+"""PatientSim backend — FastAPI WebSocket session server.
 
 Single websocket per session. Client sends student audio chunks + diagnosis.
 Server streams: transcripts (student + patient), patient TTS PCM, and final score.
@@ -33,14 +33,14 @@ logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
 )
-log = logging.getLogger("osceai")
+log = logging.getLogger("patientsim")
 
 # Quiet down noisy libs
 logging.getLogger("websockets").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-app = FastAPI(title="OSCEai backend")
+app = FastAPI(title="PatientSim backend")
 
 app.add_middleware(
     CORSMiddleware,

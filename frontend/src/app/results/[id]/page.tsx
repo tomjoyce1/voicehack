@@ -111,10 +111,13 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
     <main className="min-h-screen bg-white">
       {/* TOP BAR */}
       <div className="flex h-16 items-center justify-between border-b border-line px-6">
-        <div className="flex items-center gap-4">
-          <Logo />
-          <span className="h-5 w-px bg-line" />
-          <span className="text-sm text-ink-soft">
+        <div className="flex min-w-0 items-center gap-4">
+          <div className="flex shrink-0 flex-col gap-0.5">
+            <Logo />
+            <span className="text-xs text-ink-soft">PatientSim · results</span>
+          </div>
+          <span className="h-5 w-px shrink-0 bg-line" />
+          <span className="min-w-0 truncate text-sm text-ink-soft">
             Session results{scenario ? ` · ${scenario.name}` : ""}
           </span>
         </div>
@@ -134,11 +137,11 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
       <section className="mx-auto max-w-6xl px-6 py-10">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="font-hand text-3xl text-accent">your score</p>
+            <p className="font-hand text-3xl text-accent">Your score</p>
             <h1 className="text-4xl font-semibold tracking-tight text-ink">
               {total} / 100
             </h1>
-            <p className="mt-1 text-ink-soft">
+            <p className="mt-1 text-sm font-medium text-ink-soft">
               {scenario?.chief_complaint || "Session summary"}
             </p>
           </div>
@@ -184,10 +187,10 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
         <section className="mx-auto max-w-6xl px-6 pb-10">
           <div className="rounded-2xl border border-coral/30 bg-coral/5 p-6">
             <p className="font-hand text-2xl text-coral">
-              concordance watch-outs
+              Concordance watch-outs
             </p>
             <p className="text-sm text-ink-soft">
-              Moments where what you said and how you sounded didn&apos;t match.
+              Moments where what you said and how you sounded didn&apos;t line up.
             </p>
             <ul className="mt-4 space-y-3">
               {data.delivery.concordance.map((c, i) => (

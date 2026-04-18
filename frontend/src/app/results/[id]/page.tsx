@@ -402,11 +402,6 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
       )}
       </div>
 
-      {/* VOICE CONFIDENCE REPORT (Thymia) */}
-      <section className="mx-auto max-w-6xl px-6 pb-10">
-        <VoiceConfidenceReport analysis={voiceAnalysis} />
-      </section>
-
       <section className="mx-auto grid max-w-6xl gap-6 px-6 pb-10 md:grid-cols-[1fr_340px]">
         <div className="voicehack-print-hide-screen rounded-2xl border border-line bg-white p-6">
           <div className="flex items-center justify-between">
@@ -511,6 +506,11 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
             </p>
           </div>
         </aside>
+      </section>
+
+      {/* VOICE CONFIDENCE REPORT (Thymia) — at the bottom */}
+      <section className="mx-auto max-w-6xl px-6 pb-10">
+        <VoiceConfidenceReport analysis={voiceAnalysis} />
       </section>
     </main>
   );
@@ -705,60 +705,6 @@ function VoiceConfidenceReport({
         </table>
       </div>
 
-      {/* PER-TURN BREAKDOWN */}
-      {analysis.sections && analysis.sections.length > 0 && (
-        <div className="mt-5 space-y-3">
-          <p className="text-xs font-medium uppercase tracking-wider text-ink-soft">
-            Per-turn vocal analysis
-          </p>
-          {analysis.sections.map((s, i) => (
-            <div
-              key={i}
-              className="rounded-xl border border-line bg-paper-2 p-4"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-ink">
-                  Turn {s.turn}
-                </span>
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${s.alert_level === "none" ? "bg-accent-soft text-accent" : s.alert_level === "low" ? "bg-gold/20 text-gold" : "bg-coral/10 text-coral"}`}
-                  >
-                    {s.alert_level}
-                  </span>
-                  <span className="text-xs text-ink-soft">
-                    {s.confidence} confidence
-                  </span>
-                </div>
-              </div>
-              {/* Emotion scores */}
-              {s.emotions && Object.keys(s.emotions).length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {Object.entries(s.emotions)
-                    .sort(([, a], [, b]) => b - a)
-                    .map(([emotion, score]) => (
-                      <span
-                        key={emotion}
-                        className="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-0.5 text-xs border border-line"
-                      >
-                        <span className="text-ink-soft">{emotion}</span>
-                        <span className="font-medium tabular-nums text-ink">
-                          {fmt(score)}
-                        </span>
-                      </span>
-                    ))}
-                </div>
-              )}
-              {s.rationale && (
-                <p className="mt-2 text-xs text-ink-soft leading-relaxed">
-                  {s.rationale}
-                </p>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* PEAK / CALMEST MOMENTS */}
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         {analysis.peak_stress_moment && (
@@ -789,17 +735,6 @@ function VoiceConfidenceReport({
         )}
       </div>
 
-      {/* LLM INTERPRETATION */}
-      {analysis.llm_interpretation && (
-        <div className="mt-5 rounded-xl border border-line bg-paper-2 p-4">
-          <p className="text-xs font-medium uppercase tracking-wider text-ink-soft">
-            Voice coach analysis
-          </p>
-          <p className="mt-2 text-sm text-ink leading-relaxed">
-            {analysis.llm_interpretation}
-          </p>
-        </div>
-      )}
     </div>
   );
 }

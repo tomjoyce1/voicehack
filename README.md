@@ -1,6 +1,6 @@
-# OSCEai
+# PatientSim
 
-Voice-first OSCE practice for medical students. An AI patient you can talk to, an examiner that scores your clinical reasoning, and voice biomarkers that score your delivery.
+Voice-first **OSCE** practice for medical students: an AI patient you can speak with, an examiner that scores your clinical reasoning, and **Thymia** biomarkers that score how you sound while you do it.
 
 Built for the Voice AI Hack London, Track 1 — Voice & Medical.
 

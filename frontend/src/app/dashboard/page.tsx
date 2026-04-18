@@ -48,6 +48,9 @@ export default function DashboardPage() {
             <h1 className="text-3xl font-semibold tracking-tight text-ink">
               What do you want to practise today?
             </h1>
+            <p className="mt-2 text-sm text-ink-soft">
+              PatientSim · OSCE voice practice
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <SkillsChip label="Cardio" value={72} />

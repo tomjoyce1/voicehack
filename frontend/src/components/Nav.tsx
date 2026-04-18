@@ -26,7 +26,7 @@ export function Nav({ variant = "landing" }: { variant?: "landing" | "app" }) {
             <Link href="/dashboard" className="ink-underline">
               Dashboard
             </Link>
-            <span className="pill">Hackathon demo</span>
+            <span className="pill">PatientSim · demo</span>
           </nav>
         )}
       </div>

@@ -18,7 +18,7 @@ from typing import AsyncIterator, Optional
 import numpy as np
 import websockets
 
-log = logging.getLogger("osceai.stt")
+log = logging.getLogger(__name__)
 
 GRADIUM_STT_WS = "wss://api.gradium.ai/api/speech/asr"
 GRADIUM_SAMPLE_RATE = 24000

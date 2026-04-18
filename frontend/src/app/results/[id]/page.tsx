@@ -1,11 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Logo } from "@/components/Logo";
 import { ScoreDial } from "@/components/ScoreDial";
 import { BiomarkerTimeline } from "@/components/BiomarkerTimeline";
-import { getScenario } from "@/lib/scenarios";
+import {
+  PrescriptionNote,
+  type PrescriptionData,
+  type PrescriptionMedication,
+} from "@/components/PrescriptionNote";
+import { getScenario, type Scenario } from "@/lib/scenarios";
 import {
   ArrowLeft,
   RefreshCw,
@@ -28,7 +33,45 @@ type ResultPayload = {
   };
   transcript: { role: "student" | "patient"; text: string; annotation?: string }[];
   written_feedback: string;
+  /** Optional medication rows from backend; omit on older stored results (client fallback). */
+  prescriptionMedications?: PrescriptionMedication[];
 };
+
+function isValidResultPayload(v: unknown): v is ResultPayload {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  const dx = o.diagnosis;
+  if (!dx || typeof dx !== "object") return false;
+  const d = dx as Record<string, unknown>;
+  if (typeof d.given !== "string" || typeof d.correct !== "string" || typeof d.match !== "boolean") {
+    return false;
+  }
+  const clin = o.clinical;
+  if (!clin || typeof clin !== "object") return false;
+  const c = clin as Record<string, unknown>;
+  if (typeof c.score !== "number" || typeof c.max !== "number" || !Array.isArray(c.questions)) {
+    return false;
+  }
+  const del = o.delivery;
+  if (!del || typeof del !== "object") return false;
+  const dv = del as Record<string, unknown>;
+  if (typeof dv.score !== "number" || typeof dv.max !== "number" || !Array.isArray(dv.concordance)) {
+    return false;
+  }
+  const tl = dv.timeline;
+  if (!tl || typeof tl !== "object") return false;
+  const t = tl as Record<string, unknown>;
+  if (
+    !Array.isArray(t.confidence) ||
+    !Array.isArray(t.anxiety) ||
+    !Array.isArray(t.pacing) ||
+    !Array.isArray(t.empathy)
+  ) {
+    return false;
+  }
+  if (!Array.isArray(o.transcript) || typeof o.written_feedback !== "string") return false;
+  return true;
+}
 
 const DEMO_RESULT: ResultPayload = {
   sessionId: "demo",
@@ -76,7 +119,34 @@ const DEMO_RESULT: ResultPayload = {
   ],
   written_feedback:
     "Confident, structured history-taking with strong SOCRATES coverage and an appropriate working diagnosis stated to the patient. Family history was missed — a meaningful omission for cardiovascular risk. Delivery biomarkers show steady confidence with a brief anxiety spike during the drug history; your pacing was slightly too fast in the first minute. Overall, the patient would have felt heard and reassured. With one more pass on family history you'd be in the top quartile for this scenario.",
+  prescriptionMedications: [
+    {
+      name: "Aspirin",
+      dose: "300mg",
+      form: "dispersible tablets",
+      quantity: "",
+      instructions: "Loading dose immediately — chew or swallow as per ACS pathway",
+    },
+    {
+      name: "Glyceryl trinitrate",
+      dose: "400micrograms",
+      form: "sublingual spray",
+      quantity: "",
+      instructions: "1–2 sprays PRN for ongoing chest pain while awaiting definitive care",
+    },
+  ],
 };
+
+function patientAddressLines(scenario: Scenario | undefined): string {
+  if (!scenario) {
+    return "Simulated patient\nTraining session\nAddress withheld";
+  }
+  return [
+    "Simulated patient (training)",
+    `${scenario.system} · ${scenario.chief_complaint}`,
+    "Address withheld — training record",
+  ].join("\n");
+}
 
 export default function ResultsPage({ params }: { params: { id: string } }) {
   const [data, setData] = useState<ResultPayload>({
@@ -84,6 +154,7 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
     sessionId: params.id,
     scenarioId: params.id,
   });
+  const [clientMeds, setClientMeds] = useState<PrescriptionMedication[] | null>(null);
 
   useEffect(() => {
     const url =
@@ -92,12 +163,43 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
     fetch(url)
       .then((r) => (r.ok ? r.json() : null))
       .then((json) => {
-        if (json) setData(json as ResultPayload);
+        if (json && isValidResultPayload(json)) {
+          setData(json);
+        }
       })
       .catch(() => {
         // fall back to DEMO_RESULT
       });
   }, [params.id]);
+
+  useEffect(() => {
+    if (data.prescriptionMedications !== undefined) {
+      setClientMeds(null);
+      return;
+    }
+    const dx = data.diagnosis?.given?.trim() ?? "";
+    if (!dx) {
+      setClientMeds([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/prescription-meds", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ diagnosis: dx }),
+        });
+        const j = (await r.json()) as { medications?: PrescriptionMedication[] };
+        if (!cancelled) setClientMeds(j.medications ?? []);
+      } catch {
+        if (!cancelled) setClientMeds([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [data.diagnosis?.given, data.prescriptionMedications]);
 
   const scenario = data.scenarioId ? getScenario(data.scenarioId) : undefined;
   const total =
@@ -106,6 +208,24 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
         (data.clinical.max + data.delivery.max)) *
         100
     );
+
+  const prescription: PrescriptionData = useMemo(() => {
+    const medications: PrescriptionMedication[] =
+      data.prescriptionMedications !== undefined
+        ? data.prescriptionMedications
+        : clientMeds ?? [];
+    return {
+      patientName: scenario?.name ?? "Simulated patient",
+      patientAge: scenario ? `${scenario.age} years (${scenario.sex})` : "—",
+      patientAddress: patientAddressLines(scenario),
+      medications,
+      date: new Date().toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      }),
+    };
+  }, [scenario, data.prescriptionMedications, clientMeds]);
 
   return (
     <main className="min-h-screen bg-white">
@@ -172,6 +292,7 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
         </div>
       </section>
 
+      <div className="voicehack-print-hide-screen">
       <section className="mx-auto max-w-6xl px-6 pb-10">
         <BiomarkerTimeline
           series={[
@@ -203,9 +324,10 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
           </div>
         </section>
       )}
+      </div>
 
       <section className="mx-auto grid max-w-6xl gap-6 px-6 pb-10 md:grid-cols-[1fr_340px]">
-        <div className="rounded-2xl border border-line bg-white p-6">
+        <div className="voicehack-print-hide-screen rounded-2xl border border-line bg-white p-6">
           <div className="flex items-center justify-between">
             <h3 className="font-hand text-2xl text-accent">transcript</h3>
             <span className="text-xs text-ink-soft">with annotations</span>
@@ -249,7 +371,7 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
         </div>
 
         <aside className="space-y-4">
-          <div className="rounded-2xl border border-line bg-white p-5">
+          <div className="voicehack-print-hide-screen rounded-2xl border border-line bg-white p-5">
             <h4 className="font-medium text-ink">Key questions</h4>
             <ul className="mt-3 space-y-2">
               {data.clinical.questions.map((q) => (
@@ -274,14 +396,30 @@ export default function ResultsPage({ params }: { params: { id: string } }) {
             </ul>
           </div>
 
-          <div className="rounded-2xl border border-line bg-paper-2 p-5">
+          <div className="voicehack-print-hide-screen rounded-2xl border border-line bg-paper-2 p-5">
             <p className="font-hand text-2xl text-accent">examiner&apos;s note</p>
             <p className="mt-2 text-sm text-ink leading-relaxed">
               {data.written_feedback}
             </p>
           </div>
 
-          <div className="rounded-2xl border border-dashed border-line bg-white p-5 text-sm text-ink-soft">
+          <div
+            id="prescription-print-root"
+            className="rounded-2xl border border-line bg-paper-2 p-5 print:shadow-none"
+          >
+            <p className="font-hand text-2xl text-accent lowercase print:hidden">
+              training prescription (SimPatient)
+            </p>
+            <p className="mt-1 text-sm text-ink-soft print:hidden">
+              From your stated diagnosis — medications shown here are parsed for this training
+              worksheet only.
+            </p>
+            <div className="mt-2">
+              <PrescriptionNote prescription={prescription} layout="sidebar" />
+            </div>
+          </div>
+
+          <div className="voicehack-print-hide-screen rounded-2xl border border-dashed border-line bg-white p-5 text-sm text-ink-soft">
             <div className="flex items-center gap-2">
               <Share2 className="h-4 w-4" /> Share this with a tutor
             </div>

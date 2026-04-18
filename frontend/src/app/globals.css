@@ -98,3 +98,21 @@ button:focus-visible {
 .ink-underline:hover {
   background-size: 100% 1.5px;
 }
+
+/* Results: print / Save as PDF — only the training prescription card */
+@media print {
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  .voicehack-print-hide-screen {
+    display: none !important;
+  }
+
+  #prescription-print-root {
+    display: block !important;
+    max-width: none !important;
+    padding: 0.5rem !important;
+  }
+}

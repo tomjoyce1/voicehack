@@ -5,11 +5,12 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import re
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from .scenarios import Scenario
 
@@ -105,8 +106,20 @@ async def score_session(
     ) * 40 // 100
     delivery = int(max(0, min(40, delivery)))
 
-    # --- LLM-written feedback (best-effort) ---
-    feedback = await _llm_feedback(scenario, transcript, diagnosis, checklist, bio_timeline)
+    # --- Examiner feedback + prescription med parse (parallel; meds never fail the session) ---
+    feedback_task = asyncio.create_task(
+        _llm_feedback(scenario, transcript, diagnosis, checklist, bio_timeline)
+    )
+    meds_task = asyncio.create_task(_llm_extract_prescription_meds(diagnosis))
+    feedback_raw, meds_raw = await asyncio.gather(
+        feedback_task, meds_task, return_exceptions=True
+    )
+    if isinstance(feedback_raw, Exception):
+        raise feedback_raw
+    feedback = feedback_raw
+    prescription_medications = (
+        meds_raw if isinstance(meds_raw, list) else _normalize_medication_rows([])
+    )
 
     # Concordance heuristics
     concordance = _concordance(transcript, bio_timeline)
@@ -131,6 +144,7 @@ async def score_session(
         },
         "transcript": annotated,
         "written_feedback": feedback,
+        "prescriptionMedications": prescription_medications,
     }
 
 
@@ -195,6 +209,78 @@ def _annotate_transcript(transcript: List[dict], checklist: List[dict]) -> List[
                     break
         out.append(entry)
     return out
+
+
+def _normalize_medication_rows(raw: Any) -> List[dict]:
+    if not isinstance(raw, list):
+        return []
+    out: List[dict] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        out.append(
+            {
+                "name": str(row.get("name") or "").strip() or "—",
+                "dose": str(row.get("dose") or "").strip() or "—",
+                "form": str(row.get("form") or "").strip() or "—",
+                "quantity": str(row.get("quantity") or "").strip() or "—",
+                "instructions": str(row.get("instructions") or "").strip() or "—",
+            }
+        )
+    return out
+
+
+async def _llm_extract_prescription_meds(diagnosis: str) -> List[dict]:
+    """Parse free-text student diagnosis for drug names, doses, and instructions."""
+    text = (diagnosis or "").strip()
+    if not text:
+        return []
+    groq_key = os.getenv("GROQ_API_KEY")
+    if not groq_key:
+        return []
+
+    import httpx
+
+    prompt = f"""You extract medication prescribing details from a medical student's free-text diagnosis or management statement.
+
+STUDENT TEXT:
+{text}
+
+Return ONLY valid JSON on a single line (no markdown) with this exact shape:
+{{"medications":[{{"name":"","dose":"","form":"","quantity":"","instructions":""}}]}}
+
+Rules:
+- One object per distinct drug or product explicitly mentioned (brand or generic).
+- Put stated doses/units in "dose"; otherwise empty string.
+- "form": tablets, capsules, inhaler, liquid, injection, cream — infer if obvious.
+- "quantity" only if a count or pack size is stated; else empty string.
+- "instructions": frequency, route, PRN, or protocol phrases for that drug.
+- If NO medications are mentioned, return {{"medications":[]}}.
+"""
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {groq_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+                    "temperature": 0.1,
+                    "max_tokens": 500,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            content = (data["choices"][0]["message"]["content"] or "").strip()
+            parsed = json.loads(content)
+            meds = parsed.get("medications") if isinstance(parsed, dict) else None
+            return _normalize_medication_rows(meds)
+    except Exception as e:
+        log.warning("Prescription medication parse failed: %s", e)
+        return []
 
 
 async def _llm_feedback(
